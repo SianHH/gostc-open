@@ -44,7 +44,7 @@ This project is licensed under the [Apache-2.0 License](https://github.com/SianH
 
 [详细文档](https://docs.sian.one)
 
-[B站视频合集](https://www.bilibili.com/video/BV1nS98Y8Eaq/?share_source=copy_web&vd_source=e53d6abce322860f4471dade0a511536)
+[B站视频教程](https://www.bilibili.com/video/BV1UzSKB9EjQ)
 
 
 ## 一键安装脚本
