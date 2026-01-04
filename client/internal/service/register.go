@@ -2,21 +2,22 @@ package service
 
 import (
 	"fmt"
-	frpLog "github.com/SianHH/frp-package/pkg/util/log"
-	log2 "github.com/fatedier/golib/log"
-	"github.com/lesismal/arpc/codec"
-	arpcLog "github.com/lesismal/arpc/log"
-	"gopkg.in/yaml.v3"
 	"gostc-sub/internal/common"
 	"gostc-sub/internal/common/system"
 	"gostc-sub/pkg/env"
 	"io"
 	"log"
+
+	frpLog "github.com/SianHH/frp-package/pkg/util/log"
+	log2 "github.com/fatedier/golib/log"
+	"github.com/lesismal/arpc/codec"
+	arpcLog "github.com/lesismal/arpc/log"
+	"gopkg.in/yaml.v3"
 )
 
 func init() {
 	loggerFile := env.GetEnv("GOSTC_CLIENT_LOGGER_FILE", "")
-	loggerLevel := env.GetEnv("GOSTC_CLIENT_LOGGER_LEVEL", "error")
+	loggerLevel := env.GetEnv("GOSTC_CLIENT_LOGGER_LEVEL", "")
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile | log.Lmicroseconds)
 	var arpcLoggerLevel = arpcLog.LevelError
@@ -29,8 +30,8 @@ func init() {
 		arpcLoggerLevel = arpcLog.LevelDebug
 		frpLoggerLevel = log2.DebugLevel
 	default:
-		arpcLoggerLevel = arpcLog.LevelError
-		frpLoggerLevel = log2.ErrorLevel
+		arpcLoggerLevel = arpcLog.LevelDebug
+		frpLoggerLevel = log2.InfoLevel
 	}
 
 	var writers = []io.Writer{common.Logger}

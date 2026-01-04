@@ -2,6 +2,7 @@ package common
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -42,8 +43,11 @@ func (cl *CircularLogger) AddLog(tp, message string) {
 		Message:   message,
 		Type:      tp,
 	}
-	if cl.console {
-		fmt.Println(fmt.Sprintf("[LOG] %s %s: %s", time.Now().Format(time.DateTime), tp, message))
+	
+	if strings.HasSuffix(message, "\n") {
+		fmt.Print(fmt.Sprintf("[GOSTC LOG] %s", message))
+	} else {
+		fmt.Println(fmt.Sprintf("[GOSTC LOG] %s", message))
 	}
 
 	if len(cl.logs) < cl.maxSize {
