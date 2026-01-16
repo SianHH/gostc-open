@@ -161,6 +161,11 @@ jobs:
             ./proxy/dist/*.tar.gz
             ./proxy/dist/*.zip
 
+      - name: Cleanup go build cache
+        run: |
+          go clean -modcache
+          go clean -cache
+
       - name: Docker buildx proxy
         run: |
           cd proxy
