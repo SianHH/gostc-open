@@ -2,11 +2,12 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/kardianos/service"
-	"github.com/spf13/cobra"
 	"os"
 	"proxy/cmd/program"
 	"proxy/global"
+
+	"github.com/kardianos/service"
+	"github.com/spf13/cobra"
 )
 
 var ServiceCmd = cobra.Command{
@@ -14,7 +15,7 @@ var ServiceCmd = cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		global.Init()
 		if len(args) == 0 {
-			fmt.Println(`./server service install/uninstall/start/stop/restart ["--log-level debug -d"]`)
+			fmt.Println(`./gostc-proxy service install/uninstall/start/stop/restart ["--log-level debug -d"]`)
 			os.Exit(1)
 		}
 
@@ -57,7 +58,7 @@ var ServiceCmd = cobra.Command{
 		case "run":
 			_ = svr.Run()
 		default:
-			fmt.Println("./server service install/uninstall/start/stop/restart")
+			fmt.Println("./gostc-proxy service install/uninstall/start/stop/restart")
 			os.Exit(1)
 		}
 	},

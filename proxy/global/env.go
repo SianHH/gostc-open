@@ -33,7 +33,7 @@ LOGGER_LEVEL: %s
 }
 
 var (
-	VERSION   = "v2.0.6" // 版本
+	VERSION   = "v2.1.0" // 版本
 	BASE_PATH = ""       // 基础目录
 	/*
 		prod:生产模式，程序运行根路径和程序的所在目录保持一致

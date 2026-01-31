@@ -1,43 +1,44 @@
 package bootstrap
 
 import (
-	"github.com/caddyserver/caddy/v2"
-	"github.com/caddyserver/certmagic"
-	"go.uber.org/zap"
-	"os"
-	"proxy/configs"
+	"net"
 	"proxy/global"
+	"proxy/pkg/proxy"
+	"proxy/pkg/utils"
+	"proxy/service"
+
+	"go.uber.org/zap"
 )
 
 func InitServer() {
-	_ = os.MkdirAll(global.Config.Certs, 0644)
+	httpListen, httpPort, _ := net.SplitHostPort(global.Config.HTTPAddr)
+	httpsListen, httpsPort, _ := net.SplitHostPort(global.Config.HTTPSAddr)
 
-	cfgBytes, warnMsg, err := global.Config.ParseCaddyFileConfig()
-	if err != nil {
-		global.Logger.Error("parse caddyfile fail", zap.Error(err))
-		Release()
-		os.Exit(1)
-	}
-	for _, item := range warnMsg {
-		global.Logger.Warn(item.String())
+	var listen = ""
+	if httpListen != "" {
+		listen = httpListen
+	} else {
+		listen = httpsListen
 	}
 
-	config, err := configs.GenerateCaddyConfig(cfgBytes)
-	if err != nil {
-		global.Logger.Error("generate caddy.Config fail", zap.Error(err))
-		Release()
-		os.Exit(1)
-	}
-
-	caddy.DefaultStorage = &certmagic.FileStorage{Path: global.BASE_PATH + "/data/caddy"}
-
-	if err := caddy.Run(config); err != nil {
-		global.Logger.Error("generate caddy.Config fail", zap.Error(err))
-		Release()
-		os.Exit(1)
-	}
-
-	releaseFunc = append(releaseFunc, func() {
-		_ = caddy.Stop()
+	var err error
+	global.Proxy, err = proxy.NewProxy(proxy.ProxyConfig{
+		Listen:           listen,
+		HttpPort:         utils.StrMustInt(httpPort),
+		HttpsPort:        utils.StrMustInt(httpsPort),
+		AutoCertCacheDir: global.BASE_PATH + "/data/autocert",
 	})
+	if err != nil {
+		Release()
+		global.Logger.Fatal("init proxy error", zap.Error(err))
+	}
+	if err := global.Proxy.Start(); err != nil {
+		Release()
+		global.Logger.Fatal("start proxy error", zap.Error(err))
+	}
+	releaseFunc = append(releaseFunc, func() {
+		global.Proxy.Stop()
+	})
+
+	service.UpdateHttpProxy(*global.Config)
 }

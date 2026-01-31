@@ -2,11 +2,12 @@ package cmd
 
 import (
 	"fmt"
-	_ "github.com/caddyserver/caddy/v2/modules/standard"
-	"github.com/spf13/cobra"
-	"proxy/bootstrap"
+	"os"
+	"proxy/cmd/program"
 	"proxy/global"
-	"proxy/pkg/signal"
+
+	"github.com/kardianos/service"
+	"github.com/spf13/cobra"
 )
 
 // [SOURCE] https://patorjk.com/software/taag/#p=display&h=0&v=0&f=ANSI%20Shadow&t=GOSTC
@@ -40,12 +41,16 @@ var RootCmd = cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		global.Init()
 
-		bootstrap.InitLogger()
-		bootstrap.InitConfig()
-		bootstrap.InitServer()
-		bootstrap.InitApi()
+		program.SvcCfg.Arguments = append(program.SvcCfg.Arguments, args...)
+		svr, err := service.New(program.Program, program.SvcCfg)
+		if err != nil {
+			fmt.Println("build service fail", err)
+			os.Exit(1)
+		}
 
-		<-signal.Free()
-		bootstrap.Release()
+		if err := svr.Run(); err != nil {
+			fmt.Println("server run fail", err)
+			os.Exit(1)
+		}
 	},
 }

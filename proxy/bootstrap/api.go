@@ -3,15 +3,16 @@ package bootstrap
 import (
 	"crypto/tls"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
-	"gopkg.in/yaml.v3"
 	"net/http"
 	"os"
 	"proxy/configs"
 	"proxy/global"
 	"proxy/pkg/middleware"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+	"gopkg.in/yaml.v3"
 )
 
 func verifyCertificateAndKey(cert, key string) error {
@@ -94,10 +95,11 @@ func Domain(c *gin.Context) {
 		global.Config.Domains = make(map[string]configs.DomainConfig)
 	}
 	global.Config.Domains[req.Domain] = configs.DomainConfig{
-		Target:     req.Target,
-		Cert:       certFile,
-		Key:        keyFile,
-		ForceHttps: req.ForceHttps == 1,
+		Target:       req.Target,
+		Cert:         certFile,
+		Key:          keyFile,
+		ForceHttps:   req.ForceHttps == 1,
+		DisableHttps: false,
 	}
 	marshal, err := yaml.Marshal(global.Config)
 	if err != nil {

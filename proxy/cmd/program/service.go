@@ -1,17 +1,17 @@
 package program
 
 import (
-	"github.com/kardianos/service"
 	"proxy/bootstrap"
-	"proxy/cmd/program/service_option"
 	"time"
+
+	"github.com/kardianos/service"
 )
 
 var SvcCfg = &service.Config{
 	Name:        "gostc-proxy",
 	DisplayName: "GOSTC-PROXY",
 	Description: "GOSTC的代理网关，用于扩展自定义域名功能",
-	Option:      service_option.MakeOptions(),
+	Option:      make(service.KeyValue),
 }
 
 var Program = &program{
@@ -26,10 +26,10 @@ func (p *program) run() {
 	bootstrap.InitLogger()
 	bootstrap.InitConfig()
 	bootstrap.InitServer()
+	go bootstrap.InitWatcher()
 	bootstrap.InitApi()
 
 	<-p.stopChan
-	bootstrap.Release()
 }
 
 func (p *program) Run() error {
@@ -43,6 +43,7 @@ func (p *program) Start(s service.Service) error {
 }
 func (p *program) Stop(s service.Service) error {
 	p.stopChan <- struct{}{}
+	bootstrap.Release()
 	time.Sleep(time.Second)
 	return nil
 }
