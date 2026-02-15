@@ -30,6 +30,6 @@ func UpdateHttpProxy(c configs.Config) {
 			KeyFile:  r.Key,
 		})
 	}
-	global.Proxy.LoadRoute(proxyRouteList)
-	global.Proxy.LoadCert(certs)
+	global.Proxy.LoadRoutes(proxyRouteList)
+	global.Proxy.LoadCerts(certs)
 }
