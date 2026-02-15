@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -28,7 +29,9 @@ type Proxy struct {
 	httpServer      *http.Server
 	httpsServer     *http.Server
 	router          atomic.Value
+	routerMutex     *sync.Mutex
 	certs           atomic.Value
+	certsMutex      *sync.Mutex
 	defaultCerts    *tls.Certificate
 	autoCertManager *autocert.Manager
 }
@@ -46,6 +49,7 @@ type HostRoute struct {
 	AutoTLS  bool // 自动HTTPS
 	AutoCert bool // 自动申请证书
 	Proxy    *httputil.ReverseProxy
+	WsProxy  *httputil.ReverseProxy
 }
 
 type HostRouter struct {
@@ -78,7 +82,10 @@ func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 		return nil, errors.New("http port or https port must be specified")
 	}
 
-	var proxy = &Proxy{}
+	var proxy = &Proxy{
+		routerMutex: &sync.Mutex{},
+		certsMutex:  &sync.Mutex{},
+	}
 	proxy.router.Store(&HostRouter{
 		level1Routes: make(map[string]*HostRoute),
 		level2Routes: make(map[string]*HostRoute),
@@ -100,7 +107,7 @@ func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 		Cache: autocert.DirCache(cfg.AutoCertCacheDir),
 	}
 
-	cert, err := GenerateCert("localhost")
+	cert, err := GenerateCert("easyfrp.sian.one")
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +137,12 @@ func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 			http.Redirect(w, r, httpsURL, http.StatusMovedPermanently)
 			return
 		}
-		p.Proxy.ServeHTTP(w, r)
+
+		if isWebSocket(r) {
+			p.WsProxy.ServeHTTP(w, r)
+		} else {
+			p.Proxy.ServeHTTP(w, r)
+		}
 	})
 
 	if cfg.HttpPort > 0 {
@@ -148,7 +160,6 @@ func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 				MinVersion: tls.VersionTLS10,
 				GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 					certMap := proxy.certs.Load().(map[string]*tls.Certificate)
-
 					if c, ok := certMap[hello.ServerName]; ok {
 						return c, nil
 					}
@@ -178,7 +189,7 @@ func (p *Proxy) Start() error {
 	go func() {
 		if p.httpServer != nil {
 			log.Println("HTTP proxy listening on", p.httpServer.Addr)
-			if err := p.httpServer.ListenAndServe(); err != nil {
+			if err := p.httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				log.Println("HTTP server stopped:", err)
 			}
 		}
@@ -187,7 +198,7 @@ func (p *Proxy) Start() error {
 	go func() {
 		if p.httpsServer != nil {
 			log.Println("HTTPS proxy listening on", p.httpsServer.Addr)
-			if err := p.httpsServer.ListenAndServeTLS("", ""); err != nil {
+			if err := p.httpsServer.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				log.Println("HTTPS server stopped:", err)
 			}
 		}
@@ -215,7 +226,7 @@ type LoadRouteConfig struct {
 	AutoCert bool
 }
 
-func (p *Proxy) LoadRoute(routeConfigs []LoadRouteConfig) {
+func (p *Proxy) LoadRoutes(routeConfigs []LoadRouteConfig) {
 	router := HostRouter{
 		level1Routes: make(map[string]*HostRoute),
 		level2Routes: make(map[string]*HostRoute),
@@ -226,7 +237,7 @@ func (p *Proxy) LoadRoute(routeConfigs []LoadRouteConfig) {
 			log.Println(r.Host, err)
 			continue
 		}
-		reversProxy, err := newReverseProxy(target, r.Rewrite, r.Sni, r.Origin)
+		reversProxy, wsReversProxy, err := newReverseProxy(target, r.Rewrite, r.Sni, r.Origin)
 		if err != nil {
 			log.Println(r.Host, err)
 			continue
@@ -238,6 +249,7 @@ func (p *Proxy) LoadRoute(routeConfigs []LoadRouteConfig) {
 			AutoTLS:  r.AutoTLS,
 			AutoCert: r.AutoCert,
 			Proxy:    reversProxy,
+			WsProxy:  wsReversProxy,
 		}
 		if strings.HasPrefix(r.Host, "*.") || strings.HasPrefix(r.Host, ".") {
 			index := strings.IndexByte(r.Host, '.')
@@ -249,13 +261,54 @@ func (p *Proxy) LoadRoute(routeConfigs []LoadRouteConfig) {
 	p.router.Store(&router)
 }
 
+func (p *Proxy) AddRoute(cfg LoadRouteConfig) {
+	p.routerMutex.Lock()
+	defer p.routerMutex.Unlock()
+	router := p.router.Load().(*HostRouter)
+	target, err := url.Parse(cfg.Target)
+	if err != nil {
+		log.Println(cfg.Host, err)
+		return
+	}
+	reversProxy, wsReversProxy, err := newReverseProxy(target, cfg.Rewrite, cfg.Sni, cfg.Origin)
+	if err != nil {
+		log.Println(cfg.Host, err)
+		return
+	}
+
+	hostRoute := &HostRoute{
+		Target:   target,
+		Host:     cfg.Host,
+		AutoTLS:  cfg.AutoTLS,
+		AutoCert: cfg.AutoCert,
+		Proxy:    reversProxy,
+		WsProxy:  wsReversProxy,
+	}
+	if strings.HasPrefix(cfg.Host, "*.") || strings.HasPrefix(cfg.Host, ".") {
+		index := strings.IndexByte(cfg.Host, '.')
+		router.level2Routes[cfg.Host[index+1:]] = hostRoute
+	} else {
+		router.level1Routes[cfg.Host] = hostRoute
+	}
+	p.router.Store(router)
+}
+
+func (p *Proxy) DelRoute(host string) {
+	p.routerMutex.Lock()
+	defer p.routerMutex.Unlock()
+	router := p.router.Load().(*HostRouter)
+	delete(router.level1Routes, host)
+	delete(router.level2Routes, host)
+	p.router.Store(router)
+}
+
 type LoadCertConfig struct {
 	Host     string
 	CertFile string
 	KeyFile  string
 }
 
-func (p *Proxy) LoadCert(certConfigs []LoadCertConfig) {
+func (p *Proxy) LoadCerts(certConfigs []LoadCertConfig) {
 	certs := make(map[string]*tls.Certificate)
 	for _, c := range certConfigs {
 		x509Cert, err := tls.LoadX509KeyPair(c.CertFile, c.KeyFile)
@@ -268,76 +321,144 @@ func (p *Proxy) LoadCert(certConfigs []LoadCertConfig) {
 	p.certs.Store(certs)
 }
 
-func newReverseProxy(u *url.URL, rewrite bool, sni, origin string) (*httputil.ReverseProxy, error) {
+func (p *Proxy) AddCert(cfg LoadCertConfig) {
+	p.certsMutex.Lock()
+	defer p.certsMutex.Unlock()
+	certs := p.certs.Load().(map[string]*tls.Certificate)
+	x509Cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
+	if err != nil {
+		log.Println(cfg.Host, err)
+		return
+	}
+	certs[cfg.Host] = &x509Cert
+	p.certs.Store(certs)
+}
+
+func (p *Proxy) DelCert(host string) {
+	p.certsMutex.Lock()
+	defer p.certsMutex.Unlock()
+	certs := p.certs.Load().(map[string]*tls.Certificate)
+	delete(certs, host)
+	p.certs.Store(certs)
+}
+
+type LoadCertFromBytesConfig struct {
+	Host string
+	Cert *tls.Certificate
+}
+
+func (p *Proxy) LoadCertsFromBytes(certConfigs []LoadCertFromBytesConfig) {
+	certs := make(map[string]*tls.Certificate)
+	for _, c := range certConfigs {
+		if c.Cert == nil {
+			continue
+		}
+		certs[c.Host] = c.Cert
+	}
+	p.certs.Store(certs)
+}
+
+func (p *Proxy) AddCertFromBytes(cfg LoadCertFromBytesConfig) {
+	p.certsMutex.Lock()
+	defer p.certsMutex.Unlock()
+	certs := p.certs.Load().(map[string]*tls.Certificate)
+	if cfg.Cert == nil {
+		return
+	}
+	certs[cfg.Host] = cfg.Cert
+	p.certs.Store(certs)
+}
+
+func LoadCertFromBytes(cert, key string) (tls.Certificate, error) {
+	return tls.X509KeyPair([]byte(cert), []byte(key))
+}
+
+func newReverseProxy(u *url.URL, rewrite bool, sni, origin string) (*httputil.ReverseProxy, *httputil.ReverseProxy, error) {
 	serverName := u.Hostname()
 	if sni != "" {
 		serverName = sni
 	}
 
-	return &httputil.ReverseProxy{
-		FlushInterval: -1,
-		Rewrite: func(r *httputil.ProxyRequest) {
-			r.SetURL(u)
-			r.SetXForwarded()
+	rewriteFunc := func(r *httputil.ProxyRequest) {
+		r.SetURL(u)
+		r.SetXForwarded()
 
-			// 处理Host请求头
-			if rewrite {
-				r.Out.Host = r.In.Host
+		// 处理Host请求头
+		if rewrite {
+			r.Out.Host = r.In.Host
+		} else {
+			r.Out.Host = u.Host
+		}
+
+		o := r.In.Header.Get("Origin")
+		if o != "" {
+			if origin != "" {
+				r.Out.Header.Set("Origin", origin)
 			} else {
-				r.Out.Host = u.Host
+				r.Out.Header.Set("Origin", o)
 			}
-
-			o := r.In.Header.Get("Origin")
-			if o != "" {
-				if origin != "" {
-					r.Out.Header.Set("Origin", origin)
-				} else {
-					r.Out.Header.Set("Origin", o)
-				}
-			}
+		}
+	}
+	transport := http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true, // 支持自签名 HTTPS
+			ServerName:         serverName,
 		},
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true, // 支持自签名 HTTPS
-				//NextProtos:         []string{"h2", "http/1.1"}, // 支持 HTTP/2
-				ServerName: serverName,
-			},
-			ForceAttemptHTTP2:     false,
-			MaxIdleConns:          1024,
-			MaxIdleConnsPerHost:   128,
-			IdleConnTimeout:       90 * time.Second,
-			TLSHandshakeTimeout:   5 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ExpectContinueTimeout: 5 * time.Second,
+	}
+	wsTransport := http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true, // 支持自签名 HTTPS
+			ServerName:         serverName,
 		},
-		ModifyResponse: func(resp *http.Response) error {
-			// 如果是 WebSocket Upgrade，什么都不做
-			if resp.StatusCode == http.StatusSwitchingProtocols {
-				return nil
-			}
+		DisableKeepAlives:     true,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ExpectContinueTimeout: 5 * time.Second,
+	}
 
-			loc := resp.Header.Get("Location")
-			if loc == "" {
-				return nil
-			}
-
-			// 获取客户端原始 Host 和协议
-			xForwardedHost := resp.Request.Header.Get("X-Forwarded-Host")
-			xForwardProto := resp.Request.Header.Get("X-Forwarded-Proto")
-
-			locURL, err := url.Parse(loc)
-			if err != nil {
-				return nil
-			}
-
-			if locURL.Host == xForwardedHost || locURL.Host == u.Host {
-				locURL.Scheme = xForwardProto
-				locURL.Host = xForwardedHost
-			}
-
-			resp.Header.Set("Location", locURL.String())
+	modifyResponseFunc := func(resp *http.Response) error {
+		// 如果是 WebSocket Upgrade，什么都不做
+		if resp.StatusCode == http.StatusSwitchingProtocols {
 			return nil
-		},
-	}, nil
+		}
+
+		loc := resp.Header.Get("Location")
+		if loc == "" {
+			return nil
+		}
+
+		// 获取客户端原始 Host 和协议
+		xForwardedHost := resp.Request.Header.Get("X-Forwarded-Host")
+		xForwardProto := resp.Request.Header.Get("X-Forwarded-Proto")
+
+		locURL, err := url.Parse(loc)
+		if err != nil {
+			return nil
+		}
+
+		if locURL.Host == xForwardedHost || locURL.Host == u.Host {
+			locURL.Scheme = xForwardProto
+			locURL.Host = xForwardedHost
+		}
+
+		resp.Header.Set("Location", locURL.String())
+		return nil
+	}
+
+	return &httputil.ReverseProxy{
+			FlushInterval:  -1,
+			Rewrite:        rewriteFunc,
+			Transport:      &transport,
+			ModifyResponse: modifyResponseFunc,
+		}, &httputil.ReverseProxy{
+			FlushInterval:  -1,
+			Rewrite:        rewriteFunc,
+			Transport:      &wsTransport,
+			ModifyResponse: modifyResponseFunc,
+		}, nil
 }
 
 func GenerateCert(host string) (tls.Certificate, error) {
@@ -374,4 +495,9 @@ func GenerateCert(host string) (tls.Certificate, error) {
 	}
 
 	return tlsCert, nil
+}
+
+func isWebSocket(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("Connection"), "Upgrade") &&
+		strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
 }
