@@ -316,7 +316,12 @@ func (p *Proxy) LoadCerts(certConfigs []LoadCertConfig) {
 			log.Println(c.Host, err)
 			continue
 		}
-		certs[c.Host] = &x509Cert
+		if strings.HasPrefix(c.Host, "*") || strings.HasPrefix(c.Host, ".") {
+			index := strings.IndexByte(c.Host, '.')
+			certs[c.Host[index+1:]] = &x509Cert
+		} else {
+			certs[c.Host] = &x509Cert
+		}
 	}
 	p.certs.Store(certs)
 }
@@ -330,7 +335,12 @@ func (p *Proxy) AddCert(cfg LoadCertConfig) {
 		log.Println(cfg.Host, err)
 		return
 	}
-	certs[cfg.Host] = &x509Cert
+	if strings.HasPrefix(cfg.Host, "*") || strings.HasPrefix(cfg.Host, ".") {
+		index := strings.IndexByte(cfg.Host, '.')
+		certs[cfg.Host[index+1:]] = &x509Cert
+	} else {
+		certs[cfg.Host] = &x509Cert
+	}
 	p.certs.Store(certs)
 }
 
