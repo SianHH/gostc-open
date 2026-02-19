@@ -3,9 +3,6 @@ package engine
 import (
 	"errors"
 	"fmt"
-	v1 "github.com/SianHH/frp-package/pkg/config/v1"
-	"github.com/lesismal/arpc"
-	"go.uber.org/zap"
 	"server/global"
 	"server/model"
 	"server/pkg/utils"
@@ -13,6 +10,10 @@ import (
 	"server/repository/query"
 	"server/service/common/warn_msg"
 	"time"
+
+	v1 "github.com/SianHH/frp-package/pkg/config/v1"
+	"github.com/lesismal/arpc"
+	"go.uber.org/zap"
 )
 
 type ARpcClientEngine struct {
@@ -192,7 +193,7 @@ func (e *ARpcClientEngine) ForwardConfig(tx *query.Query, forwardCode string) er
 				ProxyProtocolVersion: func() string {
 					switch forward.ProxyProtocol {
 					case 1:
-						return "v2"
+						return "v1"
 					case 2:
 						return "v2"
 					default:
